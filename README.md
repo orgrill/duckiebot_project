@@ -1,39 +1,21 @@
-# Template: template-ros
+### Build and Run
 
-This template provides a boilerplate repository
-for developing ROS-based software in Duckietown.
+dts devel build -f -H uaaduck.local
+dts devel run -H uaaduck.local
 
-**NOTE:** If you want to develop software that does not use
-ROS, check out [this template](https://github.com/duckietown/template-basic).
-
-
-## How to use it
-
-### 1. Fork this repository
-
-Use the fork button in the top-right corner of the github page to fork this template repository.
-
-
-### 2. Create a new repository
-
-Create a new repository on github.com while
-specifying the newly forked template repository as
-a template for your new repository.
-
-
-### 3. Define dependencies
+### Define dependencies
 
 List the dependencies in the files `dependencies-apt.txt` and
 `dependencies-py3.txt` (apt packages and pip packages respectively).
 
 
-### 4. Place your code
+### Node changes
 
-Place your code in the directory `/packages/` of
-your new repository.
+Place your code in the directory `/packages/` 
 
 
-### 5. Setup launchers
+
+### Setup launchers
 
 The directory `/launchers` can contain as many launchers (launching scripts)
 as you want. A default launcher called `default.sh` must always be present.
