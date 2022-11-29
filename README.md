@@ -1,3 +1,6 @@
+### Setup
+Follow setup instructions here: [[Setup - Laptop](https://docs.duckietown.org/daffy/opmanual_duckiebot/out/laptop_setup.html)
+
 ### Build and Run
 
 dts devel build -f -H uaaduck.local
