@@ -6,6 +6,7 @@ import rospy
 import cv2
 import numpy
 
+from typing import Tuple
 from duckietown.dtros import DTROS, NodeType, ParamType, DTParam
 from duckietown_msgs.msg import WheelsCmdStamped
 from sensor_msgs.msg import CompressedImage
@@ -27,8 +28,8 @@ class BraitenbergNode(DTROS):
         #      Value: Tuple. First element is minimum pixel values to be considered in range of the respective color
         #                    Second element is maximum pixel value 
         # TODO: Calibrate pixel thresholds
-        self.color_boundries = {"red": ([10, 10, 100], [80, 80, 255]),
-                                "blue": ([100, 10, 10], [255, 50, 50]),
+        self.color_boundries = {"red": ([10, 10, 100], [50, 60, 255]),
+                                "blue": ([100, 10, 10], [255, 60, 70]),
                                 "green": ([10, 100, 10], [50, 255, 50])}
         
         self.avoid_colors = ["red", "blue"]
@@ -81,6 +82,7 @@ class BraitenbergNode(DTROS):
 
     def process_image(self, image):
         """
+        Callback function for self.camera_sub
         Process the incoming image from the camera topic
         """
         cv_image = self.bridge.compressed_imgmsg_to_cv2(image)
@@ -95,8 +97,8 @@ class BraitenbergNode(DTROS):
             msg.format = "jpeg"
             self.debug_color_pub[color].publish(msg)
 
-        left, right = 1
-        for color in [self.avoid_colors + [self.goal_color]]:
+        left = right = 1
+        for color in (self.avoid_colors + [self.goal_color]):
             current_direction = max(left, right)
             left, right = self.calculate_move(color_images[color],
                                               current_direction,
@@ -107,26 +109,24 @@ class BraitenbergNode(DTROS):
         self.send_wheel_cmd(left, right)
 
 
-    def calculate_move(self, img, current_direction: float, left: float, right: float, avoid: bool) -> tuple[float, float]:
+    def calculate_move(self, img, current_direction: float, left: float, right: float, avoid: bool) -> Tuple[float, float]:
         """
         Split image vertically into two halves. Test which side has the most color matched pixels 
         Calculate left, right speeds proportional to how close the obstacle is (number of color pixels)
         """
         mid = img.shape[1] // 2
         split_size = img.shape[0] * mid
-        left_sum = numpy.sum(img[:mid][img != 0]) # TODO: is each element a tuple? need to compare differently
-        right_sum = numpy.sum(img[mid:][img != 0])
-        new_direction = split_size / max(left_sum + 1, right_sum + 1) * 2
+        left_sum = numpy.sum(numpy.where(img[:, :mid, :] != [0, 0, 0])) // 3
+        right_sum = numpy.sum(numpy.where(img[:, mid:, :] != [0, 0, 0])) // 3
+        new_direction = max(left_sum + 1, right_sum + 1)  / split_size * 1.5
 
-        if new_direction < current_direction:
+        if new_direction < current_direction or left_sum == right_sum:
             return left, right
 
         if left_sum > right_sum:
-            # go right
-            right = new_direction
-        else:
-            # go left
             left = new_direction
+        else:
+            right = new_direction
 
         # Swap if we're not avoiding. Need to move towards the given color
         if not avoid:
@@ -153,7 +153,7 @@ class BraitenbergNode(DTROS):
 
     def send_wheel_cmd(self, left: float, right: float):
         l, r = self.speedToCmd(left, right)
-        self.wheel_pub.publish.WheelsCmdStamped(vel_left = l, vel_right = r)
+        self.wheel_pub.publish(WheelsCmdStamped(vel_left = l, vel_right = r))
 
 
 ##################################
@@ -278,9 +278,9 @@ class BraitenbergNode(DTROS):
 #        END TEMPLATE CODE       #
 ##################################
 
-    def onShutdown(self):
-        self.send_wheel_cmd(0, 0)
-        super().onShutdown()
+    def on_shutdown(self):
+        self.wheel_pub.publish(WheelsCmdStamped(vel_left = 0, vel_right = 0))
+        super(BraitenbergNode, self).on_shutdown()
 
 
 
