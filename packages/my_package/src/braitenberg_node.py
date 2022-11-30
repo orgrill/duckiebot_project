@@ -26,6 +26,7 @@ class BraitenbergNode(DTROS):
         #      Key: Color Name
         #      Value: Tuple. First element is minimum pixel values to be considered in range of the respective color
         #                    Second element is maximum pixel value 
+        # TODO: Calibrate pixel thresholds
         self.color_boundries = {"red": ([10, 10, 100], [80, 80, 255]),
                                 "blue": ([100, 10, 10], [255, 50, 50]),
                                 "green": ([10, 100, 10], [50, 255, 50])}
@@ -94,16 +95,44 @@ class BraitenbergNode(DTROS):
             msg.format = "jpeg"
             self.debug_color_pub[color].publish(msg)
 
-        # TODO: send movement msgs via self.send_wheel_cmd() based on the results in color_images
-        #   Prefer moving away from avoid_colors?
+        left, right = 1
+        for color in [self.avoid_colors + [self.goal_color]]:
+            current_direction = max(left, right)
+            left, right = self.calculate_move(color_images[color],
+                                              current_direction,
+                                              left,
+                                              right,
+                                              avoid = color in self.avoid_colors)
 
-        # TODO: move towards color_images[self.goal_color]
+        self.send_wheel_cmd(left, right)
 
-        for avoid_color in self.avoid_colors:
-            # TODO: move away from color_images[avoid_color]
-            # TODO: Priority? move away from closest obstacle first?
-            #       Queue messages according to priority?
-            pass
+
+    def calculate_move(self, img, current_direction: float, left: float, right: float, avoid: bool) -> tuple[float, float]:
+        """
+        Split image vertically into two halves. Test which side has the most color matched pixels 
+        Calculate left, right speeds proportional to how close the obstacle is (number of color pixels)
+        """
+        mid = img.shape[1] // 2
+        split_size = img.shape[0] * mid
+        left_sum = numpy.sum(img[:mid][img != 0]) # TODO: is each element a tuple? need to compare differently
+        right_sum = numpy.sum(img[mid:][img != 0])
+        new_direction = split_size / max(left_sum + 1, right_sum + 1) * 2
+
+        if new_direction < current_direction:
+            return left, right
+
+        if left_sum > right_sum:
+            # go right
+            right = new_direction
+        else:
+            # go left
+            left = new_direction
+
+        # Swap if we're not avoiding. Need to move towards the given color
+        if not avoid:
+            left, right = right, left
+
+        return left, right
 
 
     def detect_color(self, image, color: str):
