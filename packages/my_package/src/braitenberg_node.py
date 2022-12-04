@@ -30,10 +30,11 @@ class BraitenbergNode(DTROS):
         # TODO: Calibrate pixel thresholds
         self.color_boundries = {"red": ([10, 10, 100], [50, 60, 255]),
                                 "blue": ([100, 10, 10], [255, 60, 70]),
-                                "green": ([10, 100, 10], [50, 255, 50])}
+                                "green": ([10, 100, 10], [50, 255, 50]),
+                                "white": ([100, 100, 100], [255, 255, 255])}
         
         self.avoid_colors = ["red", "blue"]
-        self.goal_color = "green"
+        self.goal_color = "white"
 
         # Publishers
         self.wheel_pub = rospy.Publisher(f"{self.vehicle_name}/wheels_driver_node/wheels_cmd",
