@@ -29,10 +29,7 @@ class LaneFollowNode(DTROS):
                                          WheelsCmdStamped,
                                          queue_size = 10)
         
-        self.cam_pub = rospy.Publisher(f'/{self.vehicle_name}/corrected_image/compressed', 
-                                        CompressedImage, 
-                                        queue_size=10)
-
+        
 
         # Subscribers
         self.camera_sub = rospy.Subscriber(f"{self.vehicle_name}/camera_node/image/compressed", 
@@ -43,7 +40,8 @@ class LaneFollowNode(DTROS):
         
 
         # some helper variables
-        self.x_intercepts = []  # container for our line segment x intercepts
+        self.theta = 0
+        self.theta_threshold = 5
 
 
         # Set parameters using a robot-specific yaml file if such exists
@@ -56,7 +54,7 @@ class LaneFollowNode(DTROS):
         # Get editable parameters
         self._gain = DTParam('~gain',
                              param_type=ParamType.FLOAT, 
-                             min_value=0.0, 
+                             min_value=0.0,
                              max_value=3.0)
         self._trim = DTParam('~trim',
                              param_type=ParamType.FLOAT, 
@@ -127,79 +125,34 @@ class LaneFollowNode(DTROS):
         lines = cv2.HoughLinesP(
             preprocessed_image,
             1, np.pi/180,
-            100,                                # this argument is min amount of pixels to get a line
-            minLineLength=30, maxLineGap=100    # further tweaks for sensitivity
+            10,                                # this argument is min amount of pixels to get a line
+            minLineLength=10, maxLineGap=100    # further tweaks for sensitivity
         )
 
-
+        self.theta = 0
+    
 
         if lines is not None:
-
+            
             for line in lines:
                 x1, y1, x2, y2 = line[0]
 
-                if (x2 - x1 == 0):
-                    # handle vertical lines - we don't want to divide by zero
-                    self.x_intercepts.append(x2)
-                else:
-                    # otherwise, calculate the x intercept
-                    slope = (y2 - y1) / (x2 - x1)
-                    b = y1 - slope*x1
-
-                    # y = mx + b
-                    # y / m = x + b/m
-                    # 0 / m = x + b / m
-                    # x = - b / m
-
-                    x_intercept = -b / slope
-                    self.x_intercepts.append(x_intercept)
-
-                # draw the original line
-                cv2.line(
-                    original_image,
-                    (x1, y1), (x2, y2),
-                    (255, 0, 0)
-                )
-
-                # plot the average intercept now
-                average_intercept = np.average(self.x_intercepts)
-                
-                cv2.circle(
-                    original_image,                                 # plot them on the original image
-                    (int(average_intercept), height),               # cast the average to the int and plot it at the bottom of the screen
-                    30,                                             # radius of circle
-                    (0, 0, 255),                                    # make it red (opencv is BGR color scheme)
-                    -1                                              # -1 means it's a filled in circle
-                )
+                self.theta +=  np.arctan2((y2 - y1), (x2 - x1))
+                print(self.theta)
+        
         
 
-
-        color_images = {color: self.detect_color(cv_image, color) for color in self.color_boundries.keys()}
-
-        # Publish debug images
-        # TODO: Data intensive. Use if_any_listeners flag before publishing
-        for (color, image) in color_images.items():
-            msg = CompressedImage()
-            msg.data = cv2.imencode('.jpg', image)[1].tobytes()
-            msg.header.stamp = rospy.Time.now()
-            msg.format = "jpeg"
-            self.debug_color_pub[color].publish(msg)
-
-        # every 5 x intercepts, pop off the oldest one
-        if len(self.x_intercepts) % 5 == 0 and self.x_intercepts:
-            self.x_intercepts.pop(0)
-        
-
-        if self.x_intercepts:
-
-            left, right = self.calculate_move(np.average(self.x_intercepts), (width, height))
+        if abs(self.theta) < self.theta_threshold:
+            self.send_wheel_cmd(1, 1)
+        else:
+            left, right = self.calculate_move()
             print(left, right)
 
             self.send_wheel_cmd(left, right)
 
 
 
-    def calculate_move(self, average_intercept, screensize) -> Tuple[float, float]:
+    def calculate_move(self) -> Tuple[float, float]:
         """
         simple for robot behavior 
         
@@ -207,15 +160,8 @@ class LaneFollowNode(DTROS):
         rules based (for now)
         """
         
-        left_limit, right_limit = screensize
-        throw = (left_limit / right_limit)
-
-        # dirt simple bangon bang off controller
-        position = average_intercept / throw
-        if position > 0.5:
+        if self.theta > self.theta_threshold:
             return (0, 1)
-        elif position == 0.5:
-            return (1, 1)
         else:
             return (1, 0)
 
