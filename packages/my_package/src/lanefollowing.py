@@ -19,11 +19,11 @@ class LaneFollowNode(DTROS):
     # this appears to be the most important to using this algorithm - modify at your own risk
     mask_poly = np.array([[
     [0, 480],
-    [0, 500],                             
-    [640//10, 480//2],                         
-    [9*640//10, 480//2],
-    [640, 500],                                     
-    [640, 480]                               
+    [0, 480 - 100],
+    [640 // 3, 480//2],
+    [2*640//3, 480//2],
+    [640, 480 - 100]
+    [640, 480]                           
     ]])
 
     def __init__(self, node_name):
@@ -166,8 +166,9 @@ class LaneFollowNode(DTROS):
 
         # publish everything to the debug panel - hard coded
         # this slows down performance egregiously
+        # commented out for now
         for channel, screen in [(self.debug_roboview, preprocessed_image), 
-                                # (self.debug_lineview, original_image) 
+                                (self.debug_lineview, original_image) 
                                 
                                 ]:
 
@@ -176,16 +177,8 @@ class LaneFollowNode(DTROS):
             msg.header.stamp = rospy.Time.now()
             msg.format = "jpeg"
             channel.publish(msg)
-        
-        
 
-        # simple bang on bang off controller
-        if abs(theta) < self.theta_threshold:
-            self.send_wheel_cmd(1, 1)
-        else:
-            left, right = self.calculate_move(theta)
-
-            self.send_wheel_cmd(left, right)
+        self.send_wheel_cmd(*self.calculate_move(theta))
 
 
 
@@ -196,11 +189,17 @@ class LaneFollowNode(DTROS):
 
         rules based (for now)
         """
-        
-        if theta >= self.theta_threshold:
-            return (0, 1)
+        if abs(theta) <= self.theta_threshold:
+            # if the total magnitude of the theta deviation, run both wheels
+
+            return (1, .9)  # trim straight travel a little bit
         else:
-            return (1, 0)
+            # otherwise the sum of all the angles is greater than theta threshold apply the appropriate correction
+            if theta >= self.theta_threshold:
+                
+                return (0, 1)
+            else:
+                return (1, 0)
 
 
     
