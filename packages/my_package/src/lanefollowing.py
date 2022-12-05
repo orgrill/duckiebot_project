@@ -12,8 +12,53 @@ from duckietown_msgs.msg import WheelsCmdStamped
 from sensor_msgs.msg import CompressedImage
 from cv_bridge import CvBridge
 
+class FloatPIDController:
+
+    def __init__(self, 
+                initial_value: float, 
+                target_value: float,
+                k_P: float,  # gain of position value
+                k_I: float,  # gain of integral value
+                k_D: float,  # gain of derivative value
+                ):
+        
+
+        self._value = initial_value
+        self._error = target_value - initial_value
+        self.target = target_value
+
+        # gain controls for the PID
+        self.k_P = k_P
+        self.k_I = k_I
+        self.k_D = k_D
+
+    
+        self.accumulator = []
+    
+    
+    @property
+    def value(self):
+        # returns the value of the error function when called
+        return self.error
+    
+    @value.setter
+    def update(self, other):
+        self._value = other
+        self._error = self.target - other
+        
+        self.accumulator.append(self.error())
+
+
 class LaneFollowNode(DTROS):
     
+    mask_poly = np.array([[
+    [0, 480],
+    [0, 480//2],                                    # bottom left pixel
+    [640, 480//2],                          # top left pixel
+    [640, 480//2],                        # top right pixel
+    [640, 480]                                 # bottom right pixel
+    ]])
+
     def __init__(self, node_name):
         # initialize the DTROS parent class
         super(LaneFollowNode, self).__init__(node_name=node_name, node_type=NodeType.GENERIC)
@@ -23,15 +68,20 @@ class LaneFollowNode(DTROS):
         # Image processing setup
         self.bridge = CvBridge()
         
-
-        # Publishers
+        # Rospy Publishers
         self.wheel_pub = rospy.Publisher(f"{self.vehicle_name}/wheels_driver_node/wheels_cmd",
                                          WheelsCmdStamped,
                                          queue_size = 10)
         
+
+        
+        # these two publishers create the view interface
+        self.debug_roboview = rospy.Publisher(f"~debug/roboview", CompressedImage, queue_size=10)
+        self.debug_lineview = rospy.Publisher(f"~debug/lineview", CompressedImage, queue_size=10)
+
         
 
-        # Subscribers
+        # Subscribers  these are where we get sensor data for the robot's controls
         self.camera_sub = rospy.Subscriber(f"{self.vehicle_name}/camera_node/image/compressed", 
                                            CompressedImage,
                                            self.preprocess_image,
@@ -40,7 +90,6 @@ class LaneFollowNode(DTROS):
         
 
         # some helper variables
-        self.theta = 0
         self.theta_threshold = 5
 
 
@@ -76,6 +125,8 @@ class LaneFollowNode(DTROS):
     def preprocess_image(self, image):
         """
         Callback function for self.camera_sub
+
+
         Process the incoming image from the camera topic, apply the appropriate filters etc. then send
         the image to the "image processor" function
         """
@@ -86,13 +137,10 @@ class LaneFollowNode(DTROS):
 
         width, height, layers = cv_image.shape  # get the shape of the image, we'll use this 
         
+        # print('raw width, height', width, height)  # debug
+
         # define region of interest, we don't care about anything not in here:
-        mask_poly = np.array([[
-            [0, height],                                    # bottom left pixel
-            [width//3, height//2],                          # top left pixel
-            [2*width//3, height//2],                        # top right pixel
-            [width, height]                                 # bottom right pixel
-        ]])
+
         
         # preprocess the image
         frame = cv2.cvtColor(cv_image, cv2.COLOR_RGB2GRAY)  # convert to grayscale
@@ -103,10 +151,11 @@ class LaneFollowNode(DTROS):
         mask = np.zeros_like(frame)
         # write the mask poly onto our mask
         cv2.fillPoly(
-            mask, mask_poly, 255
+            mask, LaneFollowNode.mask_poly, 255
         )
 
         frame = cv2.bitwise_and(frame, mask)
+        
 
         # now send the original image and the pre-processed image to the image processor
         self.image_processor(
@@ -119,7 +168,9 @@ class LaneFollowNode(DTROS):
     def image_processor(self, original_image, preprocessed_image):
 
         width, height, layers = original_image.shape
-        
+        theta = 0
+
+
         # first find the lines in the image
         line_image = np.zeros_like(original_image)    # create blank image to draw lines on
         lines = cv2.HoughLinesP(
@@ -128,31 +179,47 @@ class LaneFollowNode(DTROS):
             10,                                # this argument is min amount of pixels to get a line
             minLineLength=10, maxLineGap=100    # further tweaks for sensitivity
         )
-
-        self.theta = 0
     
 
         if lines is not None:
             
             for line in lines:
                 x1, y1, x2, y2 = line[0]
+                theta +=  np.arctan2((y2 - y1), (x2 - x1))
 
-                self.theta +=  np.arctan2((y2 - y1), (x2 - x1))
-                print(self.theta)
+                # now let's draw these lines and publish them to the bot
+                cv2.line(original_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                cv2.line(preprocessed_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+
+
+        # put some masking lines over the debug views
+        cv2.polylines(original_image, LaneFollowNode.mask_poly, True, (255, 0 ,0), 2)
+        cv2.polylines(preprocessed_image, LaneFollowNode.mask_poly, True, (255, 0 ,0), 2)
+
+
+        # publish everything to the debug panel - hard coded
+        for channel, screen in [(self.debug_roboview, preprocessed_image), 
+                                (self.debug_lineview, original_image)]:
+
+            msg = CompressedImage()
+            msg.data = cv2.imencode('.jpg', screen)[1].tobytes()
+            msg.header.stamp = rospy.Time.now()
+            msg.format = "jpeg"
+            channel.publish(msg)
         
         
 
-        if abs(self.theta) < self.theta_threshold:
+        # simple bang on bang off controller
+        if abs(theta) < self.theta_threshold:
             self.send_wheel_cmd(1, 1)
         else:
-            left, right = self.calculate_move()
-            print(left, right)
+            left, right = self.calculate_move(theta)
 
             self.send_wheel_cmd(left, right)
 
 
 
-    def calculate_move(self) -> Tuple[float, float]:
+    def calculate_move(self, theta) -> Tuple[float, float]:
         """
         simple for robot behavior 
         
@@ -160,7 +227,7 @@ class LaneFollowNode(DTROS):
         rules based (for now)
         """
         
-        if self.theta > self.theta_threshold:
+        if theta >= self.theta_threshold:
             return (0, 1)
         else:
             return (1, 0)
