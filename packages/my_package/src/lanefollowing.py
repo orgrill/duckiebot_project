@@ -12,51 +12,18 @@ from duckietown_msgs.msg import WheelsCmdStamped
 from sensor_msgs.msg import CompressedImage
 from cv_bridge import CvBridge
 
-class FloatPIDController:
-
-    def __init__(self, 
-                initial_value: float, 
-                target_value: float,
-                k_P: float,  # gain of position value
-                k_I: float,  # gain of integral value
-                k_D: float,  # gain of derivative value
-                ):
-        
-
-        self._value = initial_value
-        self._error = target_value - initial_value
-        self.target = target_value
-
-        # gain controls for the PID
-        self.k_P = k_P
-        self.k_I = k_I
-        self.k_D = k_D
-
-    
-        self.accumulator = []
-    
-    
-    @property
-    def value(self):
-        # returns the value of the error function when called
-        return self.error
-    
-    @value.setter
-    def update(self, other):
-        self._value = other
-        self._error = self.target - other
-        
-        self.accumulator.append(self.error())
-
-
 class LaneFollowNode(DTROS):
     
+
+    # this mask polygon describes the shape of the image that the robot cares about
+    # this appears to be the most important to using this algorithm - modify at your own risk
     mask_poly = np.array([[
     [0, 480],
-    [0, 480//2],                                    # bottom left pixel
-    [640, 480//2],                          # top left pixel
-    [640, 480//2],                        # top right pixel
-    [640, 480]                                 # bottom right pixel
+    [0, 500],                             
+    [640//10, 480//2],                         
+    [9*640//10, 480//2],
+    [640, 500],                                     
+    [640, 480]                               
     ]])
 
     def __init__(self, node_name):
@@ -155,7 +122,7 @@ class LaneFollowNode(DTROS):
         )
 
         frame = cv2.bitwise_and(frame, mask)
-        
+        cv_image = cv2.bitwise_and(cv_image, cv_image, mask=mask)
 
         # now send the original image and the pre-processed image to the image processor
         self.image_processor(
@@ -189,7 +156,7 @@ class LaneFollowNode(DTROS):
 
                 # now let's draw these lines and publish them to the bot
                 cv2.line(original_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
-                cv2.line(preprocessed_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+                cv2.line(preprocessed_image, (x1, y1), (x2, y2), (255, 0, 0), 3)
 
 
         # put some masking lines over the debug views
@@ -198,8 +165,11 @@ class LaneFollowNode(DTROS):
 
 
         # publish everything to the debug panel - hard coded
+        # this slows down performance egregiously
         for channel, screen in [(self.debug_roboview, preprocessed_image), 
-                                (self.debug_lineview, original_image)]:
+                                # (self.debug_lineview, original_image) 
+                                
+                                ]:
 
             msg = CompressedImage()
             msg.data = cv2.imencode('.jpg', screen)[1].tobytes()
