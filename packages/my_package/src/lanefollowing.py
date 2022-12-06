@@ -19,10 +19,8 @@ class LaneFollowNode(DTROS):
     # this appears to be the most important to using this algorithm - modify at your own risk
     mask_poly = np.array([[
     [0, 480],
-    [0, 480 - 100],
-    [640 // 3, 480//2],
-    [2*640//3, 480//2],
-    [640, 480 - 100]
+    [0, 480//2],
+    [640, 480//2],
     [640, 480]                           
     ]])
 
@@ -163,7 +161,19 @@ class LaneFollowNode(DTROS):
         cv2.polylines(original_image, LaneFollowNode.mask_poly, True, (255, 0 ,0), 2)
         cv2.polylines(preprocessed_image, LaneFollowNode.mask_poly, True, (255, 0 ,0), 2)
 
+        # wrte out the theta measurement on the screen
+        cv2.putText(
+            preprocessed_image,
+            f"{int(theta)} angular sum",
+            (0, 50),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 255, 255),
+            1,
+            2
+        )
 
+        
         # publish everything to the debug panel - hard coded
         # this slows down performance egregiously
         # commented out for now
@@ -177,8 +187,12 @@ class LaneFollowNode(DTROS):
             msg.header.stamp = rospy.Time.now()
             msg.format = "jpeg"
             channel.publish(msg)
+        
 
-        self.send_wheel_cmd(*self.calculate_move(theta))
+        left_command, right_command = self.calculate_move(theta)
+
+        self.send_wheel_cmd(left=4*left_command,
+                            right=3*right_command)  # values here for trimming
 
 
 
@@ -191,15 +205,14 @@ class LaneFollowNode(DTROS):
         """
         if abs(theta) <= self.theta_threshold:
             # if the total magnitude of the theta deviation, run both wheels
-
-            return (1, .9)  # trim straight travel a little bit
+            return (1, 1)
         else:
             # otherwise the sum of all the angles is greater than theta threshold apply the appropriate correction
+            # this is set to two because of the inertia in the turns
             if theta >= self.theta_threshold:
-                
-                return (0, 1)
+                return (0, 2)
             else:
-                return (1, 0)
+                return (2, 0)
 
 
     
